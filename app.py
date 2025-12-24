@@ -17,7 +17,6 @@ st.markdown("""
     td { text-align: right !important; }
     th { text-align: center !important; }
     .result-summary { font-size: 1.1rem; font-weight: 700; margin-top: 10px; padding: 15px; background-color: #f8f9fa; border-radius: 10px; border-left: 5px solid #2e7d32; }
-    /* 사이드바 메모 스타일 */
     .sidebar-memo { font-size: 0.85rem; color: #2e7d32; font-weight: 600; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
@@ -30,8 +29,7 @@ def get_symbol_data(raw_input):
     if raw_input.isdigit() and len(raw_input) == 6:
         for suffix in [".KS", ".KQ"]:
             t_obj = yf.Ticker(raw_input + suffix)
-            hist = t_obj.history(period="1d")
-            if not hist.empty:
+            if not t_obj.history(period="1d").empty:
                 ticker_out, market = raw_input + suffix, "KR"
                 name = t_obj.info.get('longName') or t_obj.info.get('shortName') or raw_input
                 mapping = {"Samsung Electronics Co., Ltd.": "삼성전자", "SK hynix Inc.": "SK하이닉스"}
@@ -39,82 +37,56 @@ def get_symbol_data(raw_input):
                 break
     else:
         t_obj = yf.Ticker(raw_input)
-        hist = t_obj.history(period="1d")
-        if not hist.empty:
+        if not t_obj.history(period="1d").empty:
             ticker_out, market, name = raw_input, "US", t_obj.info.get('shortName', raw_input)
     return ticker_out, market, name
 
 def get_advanced_chart(ticker_symbol):
-    # 데이터 로드 (이평선 계산을 위해 2년치)
     df = yf.download(ticker_symbol, period="2y", progress=False)
     if df.empty: return None
-    
-    # 이동평균선 계산
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['MA120'] = df['Close'].rolling(window=120).mean()
+    df = df.iloc[-252:].copy().dropna(subset=['Open', 'High', 'Low', 'Close'])
     
-    # 최근 1년(약 252 거래일) 데이터 슬라이싱 및 결측치 제거
-    df = df.iloc[-252:].copy()
-    df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
-
     fig = go.Figure()
-
-    # 1. 캔들스틱 차트 (가시성 최적화)
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close'],
-        name='주가(캔들)',
-        increasing_line_color='#d32f2f', # 상승 빨강
-        decreasing_line_color='#1976d2'  # 하락 파랑
-    ))
-
-    # 2. 이동평균선 추가
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='주가(캔들)',
+                                 increasing_line_color='#d32f2f', decreasing_line_color='#1976d2'))
     fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], line=dict(color='#FFD700', width=1.2), name='5일선'))
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='#FF1493', width=1.5), name='20일선'))
     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='#00BFFF', width=1.8), name='60일선'))
     fig.add_trace(go.Scatter(x=df.index, y=df['MA120'], line=dict(color='#8B4513', width=2.2), name='120일선'))
-
-    fig.update_layout(
-        title=f"최근 1년 주가 흐름 분석 (이동평균선 포함)",
-        yaxis_title="가격",
-        xaxis_rangeslider_visible=False,
-        height=600,
-        template="plotly_white",
-        hovermode='x unified',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    # 주말 공백 제거
+    fig.update_layout(title="최근 1년 주가 흐름 분석 (이동평균선 포함)", yaxis_title="가격", xaxis_rangeslider_visible=False,
+                      height=500, template="plotly_white", hovermode='x unified')
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     return fig
 
 # --- 2. 사이드바: 종목 조회 ---
 with st.sidebar:
     st.header("🔍 관심 종목 조회")
-    # [요청 사항] 국장/미장 안내 메모 추가
     st.markdown("<div class='sidebar-memo'>💡 국장(종목번호) 및 미장(티커) 모든 종목 조회 가능</div>", unsafe_allow_html=True)
-    
     user_input = st.text_input("종목 번호 또는 티커 입력", value="005930")
     ticker, market, s_name = get_symbol_data(user_input)
+    
+    # 실시간 환율 정보 (미국 주식일 경우)
+    ex_rate = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1] if market == "US" else 1.0
     
     if ticker:
         st.success(f"✅ {s_name} 연동 성공")
         live_p = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1]
-    else:
-        live_p = 0.0
+    else: live_p = 0.0
 
 # --- 3. 메인 화면 ---
 st.markdown(f"<div class='main-title'>📈 {s_name} AI 시뮬레이션</div>", unsafe_allow_html=True)
-st.markdown(f"<div class='disclaimer'>본 프로그램에서 제공하는 정보는 단순 참고용이며, 투자 권유를 목적으로 하지 않습니다.<br>모든 투자 판단의 책임은 투자자 본인에게 있으며, 결과에 대한 법적 책임을 지지 않습니다.</div>", unsafe_allow_html=True)
+st.markdown("<div class='disclaimer'>본 프로그램에서 제공하는 정보는 단순 참고용이며, 투자 권유를 목적으로 하지 않습니다.</div>", unsafe_allow_html=True)
 
 # 1️⃣ 내 현재 보유 현황
 st.markdown("<div class='section-title'>👤 1️⃣ 내 현재 보유 현황</div>", unsafe_allow_html=True)
 with st.expander("입력창 열기/닫기", expanded=True):
     c1, c2, c3 = st.columns(3)
     curr_unit = "원" if market == "KR" else "$"
-    current_avg = st.number_input(f"현재 평단가 ({curr_unit})", value=float(live_p))
+    current_avg = st.number_input(f"현재 평단가 ({curr_unit})", value=float(live_p) if live_p > 0 else 70000.0)
     current_qty = st.number_input("현재 보유 수량 (주)", value=0)
     now_p = st.number_input(f"현재 시장가 (자동연동)", value=float(live_p))
 
@@ -129,20 +101,26 @@ with cs3:
     st.markdown("**💰 예상 투입 금액**")
     val_str = f"${total_buy_amt:,.2f}" if market == "US" else f"{total_buy_amt:,.0f}원"
     st.markdown(f"<h3 style='color: #2e7d32; text-align: right;'>{val_str}</h3>", unsafe_allow_html=True)
+    if market == "US": st.caption(f"(약 {total_buy_amt*ex_rate:,.0f}원)")
 
 # --- 4. 차트 표시 ---
 st.divider()
 chart_fig = get_advanced_chart(ticker)
-if chart_fig:
-    st.plotly_chart(chart_fig, use_container_width=True)
+if chart_fig: st.plotly_chart(chart_fig, use_container_width=True)
 
 # --- 5. 분석 결과 ---
 st.divider()
 st.markdown("<div class='section-title'>🔍 시뮬레이션 분석 결과</div>", unsafe_allow_html=True)
+
 old_cost, new_cost = current_avg * current_qty, buy_p * buy_q
 total_qty = current_qty + buy_q
 final_avg = (old_cost + new_cost) / total_qty if total_qty > 0 else 0
 avg_diff = final_avg - current_avg
+
+# 수익 계산 (원화 환산 포함)
+conv = ex_rate if market == "US" else 1
+curr_profit = (now_p - current_avg) * current_qty
+curr_rtn = (curr_profit / old_cost * 100) if old_cost > 0 else 0
 aft_profit = (now_p - final_avg) * total_qty
 aft_rtn = (aft_profit / (old_cost + new_cost) * 100) if (old_cost + new_cost) > 0 else 0
 
@@ -157,8 +135,24 @@ if total_qty > 0:
     d_color, d_sign, d_word = ("#d32f2f", "▲", "상승") if avg_diff > 0 else ("#2e7d32", "▼", "하락")
     st.markdown(f"<div class='result-summary'>☞ 분석 결과: 평단가가 <span style='color:{d_color};'>{d_sign} {abs(avg_diff):,.2f} {d_word}</span>이 되었습니다.</div>", unsafe_allow_html=True)
 
-# 데이터 표 및 푸터
+# --- 복구된 데이터 표 섹션 ---
+df_res = pd.DataFrame({
+    "항목": ["보유 수량", "평균 단가", "총 투자금(원화환산)", "수익 금액", "수익률(%)"],
+    "현재 상태": [f"{current_qty:,}주", f"{current_avg:,.2f}", f"{old_cost*conv:,.0f}원", f"{curr_profit*conv:+,.0f}원", f"{curr_rtn:.2f}%"],
+    "추가 매수 후 예상": [f"{total_qty:,}주", f"{final_avg:,.2f}", f"{(old_cost+new_cost)*conv:,.0f}원", f"{aft_profit*conv:+,.0f}원", f"{aft_rtn:.2f}%"]
+}).set_index("항목")
+
+def apply_color(val):
+    if "+" in str(val): return 'color: #d32f2f; font-weight: bold;'
+    if "-" in str(val): return 'color: #2e7d32; font-weight: bold;'
+    return ''
+st.table(df_res.style.applymap(apply_color, subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
+
+# --- 하단 가이드 및 푸터 ---
 st.info("📑 **AI 인텔리전트 가이드**")
-st.write("차트의 이동평균선 흐름과 현재가의 위치를 비교하여 투자 비중을 조절하시기 바랍니다.")
+if total_qty == 0: st.write("보유 현황과 시나리오를 입력하시면 AI 분석이 시작됩니다.")
+elif aft_rtn < 0: st.write(f"현재 {s_name} 평단가 회복까지 약 **{abs(aft_rtn):.2f}%** 상승이 필요합니다.")
+else: st.write("🎉 현재 수익 구간입니다! 추가 매수는 수익금 극대화를 위한 전략입니다.")
+
 st.markdown("---")
-st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b><br>© 2025 All Rights Reserved. Powered by AI Quant Intelligence.</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b><br>© 2025 All Rights Reserved.</div>", unsafe_allow_html=True)
