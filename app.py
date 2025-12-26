@@ -6,23 +6,36 @@ import plotly.graph_objects as go
 # --- [1. 페이지 설정 및 세션 초기화] ---
 st.set_page_config(page_title="CHEONGUN Quant Simulator", layout="wide")
 
-# 모든 입력값을 사용자의 손길대로 박제(FIX)하는 메모리 설정
+# 세션 상태 초기화 (사용자 입력값 보존용)
 if 'my_avg' not in st.session_state: st.session_state.my_avg = 0.0
 if 'my_qty' not in st.session_state: st.session_state.my_qty = 0
 if 'buy_p_fix' not in st.session_state: st.session_state.buy_p_fix = 0.0
 
+# --- [2. 간격 및 스타일 최적화 CSS] ---
 st.markdown("""
     <style>
-    .main-title { font-size: 2.5rem; font-weight: 900; text-align: center; margin-bottom: 5px; }
-    .disclaimer { font-size: 0.9rem; color: #666666; text-align: center; margin-bottom: 30px; background-color: #fdf2f2; padding: 10px; border-radius: 8px; }
-    .section-title { font-size: 1.75rem !important; font-weight: 700 !important; margin-top: 25px; margin-bottom: 15px; }
-    .result-summary { font-size: 1.2rem; font-weight: 700; margin-top: 20px; padding: 20px; background-color: #f8f9fa; border-radius: 12px; border-left: 8px solid #2e7d32; }
+    .main-title { font-size: 2.2rem; font-weight: 900; text-align: center; margin-bottom: 0px; }
+    .disclaimer { font-size: 0.8rem; color: #666666; text-align: center; margin-bottom: 10px; line-height: 1.4; }
+    .section-title { font-size: 1.5rem !important; font-weight: 700 !important; margin-top: 10px; margin-bottom: 5px; }
+    
+    /* 분석 결과와 안내 문구 사이 간격 좁히기 */
+    .stMetric { padding-bottom: 0px !important; }
+    .result-summary { 
+        font-size: 1.1rem; font-weight: 700; 
+        margin-top: -10px; /* 간격 좁힘 */
+        margin-bottom: 10px;
+        padding: 15px; background-color: #f8f9fa; border-radius: 10px; border-left: 6px solid #2e7d32; 
+    }
+    
+    /* 표 상단 간격 조정 */
+    .summary-table-title { margin-top: -5px; margin-bottom: 5px; font-size: 1.2rem; font-weight: 700; }
+    
     td { text-align: right !important; }
     th { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- [2. 엔진: 데이터 로드 및 한글명 처리] ---
+# --- [3. 엔진: 데이터 로직] ---
 @st.cache_data(ttl=3600)
 def get_symbol_info(raw_input):
     if not raw_input: return None, "KR", "입력대기"
@@ -31,8 +44,7 @@ def get_symbol_info(raw_input):
     if raw_input.isdigit() and len(raw_input) == 6:
         for suffix in [".KS", ".KQ"]:
             t_obj = yf.Ticker(raw_input + suffix)
-            hist = t_obj.history(period="5d")
-            if not hist.empty:
+            if not t_obj.history(period="1d").empty:
                 ticker_out, market = raw_input + suffix, "KR"
                 raw_name = t_obj.info.get('longName') or t_obj.info.get('shortName') or raw_input
                 mapping = {"Samsung Electronics Co., Ltd.": "삼성전자", "SK hynix Inc.": "SK하이닉스"}
@@ -40,12 +52,12 @@ def get_symbol_info(raw_input):
                 break
     else:
         t_obj = yf.Ticker(raw_input)
-        if not t_obj.history(period="5d").empty:
+        if not t_obj.history(period="1d").empty:
             ticker_out, market = raw_input, "US"
             name = t_obj.info.get('shortName', raw_input)
     return ticker_out, market, name
 
-# --- [3. 사이드바 조회] ---
+# --- [4. 사이드바] ---
 with st.sidebar:
     st.header("🔍 관심 종목 조회")
     u_input = st.text_input("종목 번호 또는 티커 입력", value="005930")
@@ -56,11 +68,11 @@ with st.sidebar:
         st.success(f"✅ {s_name} 승인 완료")
     unit = "원" if market == "KR" else "$"
 
-# --- [4. 메인 화면: 한글명 및 법적 주의문구] ---
+# --- [5. 메인 화면] ---
 st.markdown(f"<div class='main-title'>📈 {s_name} 투자 시뮬레이션</div>", unsafe_allow_html=True)
-st.markdown("<div class='disclaimer'>⚠️ 본 프로그램은 참고용이며 모든 투자 책임은 본인에게 있습니다.</div>", unsafe_allow_html=True)
+st.markdown("<div class='disclaimer'>본 프로그램은 참고용이며 모든 투자 책임은 본인에게 있습니다.</div>", unsafe_allow_html=True)
 
-# 1️⃣ 내 현재 보유 현황 (입력값 고정)
+# 1️⃣ 보유 현황 (입력값 고정)
 st.markdown(f"<div class='section-title'>👤 1️⃣ 내 현재 보유 현황 ({unit})</div>", unsafe_allow_html=True)
 with st.expander("데이터 입력", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -69,18 +81,17 @@ with st.expander("데이터 입력", expanded=True):
     now_p = c3.number_input(f"현재 시장가 (실시간)", value=float(live_p))
     st.session_state.my_avg, st.session_state.my_qty = current_avg, current_qty
 
-# 2️⃣ 추가 매수 시나리오 (아빠의 요청: 추가 매수 가격 고정 로직 적용)
+# 2️⃣ 추가 매수 시나리오 (가격 고정 로직 포함)
 st.divider()
 st.markdown(f"<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오 ({unit})</div>", unsafe_allow_html=True)
 cs1, cs2, cs3 = st.columns([1.5, 1.5, 1.2])
-
 p_min, p_max = float(now_p * 0.1), float(now_p * 3.0)
+
 with cs1:
-    # [FIX 핵심] 추가 매수 가격도 세션을 사용하여 아빠가 입력한 값을 기억하게 함
     buy_p_in = st.number_input(f"추가 매수 가격", min_value=p_min, max_value=p_max, 
                                value=st.session_state.buy_p_fix if st.session_state.buy_p_fix > 0 else float(now_p))
     buy_p = st.slider("가격 조정", p_min, p_max, value=min(max(buy_p_in, p_min), p_max), label_visibility="collapsed")
-    st.session_state.buy_p_fix = buy_p # 현재 값을 메모리에 박제
+    st.session_state.buy_p_fix = buy_p 
 
 with cs2:
     buy_q_in = st.number_input("추가 구매 수량 (주)", min_value=0, max_value=100000, value=0)
@@ -92,12 +103,11 @@ with cs3:
     val_str = f"${total_buy:,.2f}" if market == "US" else f"{total_buy:,.0f}원"
     st.markdown(f"<h3 style='color: #2e7d32; text-align: right;'>{val_str}</h3>", unsafe_allow_html=True)
 
-# 3️⃣ 분석 결과 (계산 정확도 검증 완료)
+# 3️⃣ 분석 결과 (간격 조정 및 색상 강조)
 st.divider()
 st.markdown("<div class='section-title'>🔍 시뮬레이션 분석 결과</div>", unsafe_allow_html=True)
 
 total_qty = current_qty + buy_q
-# 정확한 총 투자금 계산 (현재 보유 자산 가치 + 새로 매수할 금액)
 total_cost = (current_avg * current_qty) + (buy_p * buy_q)
 final_avg = total_cost / total_qty if total_qty > 0 else 0
 avg_diff = final_avg - current_avg
@@ -108,25 +118,26 @@ m1.metric("현재 시장가", f"{now_p:,.2f} {unit}")
 m2.metric("예상 평단가", f"{final_avg:,.2f} {unit}", f"{avg_diff:,.2f}", delta_color="inverse")
 m3.metric("예상 수익률", f"{aft_rtn:.2f}%")
 
-# [복구] 물타기 안내 문구
+# [핵심 수정] 하단 안내 문구 (간격 좁히고 색상/기호 적용)
 if total_qty > 0:
-    color, status = ("#d32f2f", "상승") if avg_diff > 0 else ("#2e7d32", "하락")
+    # 하락(▼)은 파란색(#1976d2), 상승(▲)은 빨간색(#d32f2f)
+    color, sign, status = ("#d32f2f", "▲", "상승") if avg_diff > 0 else ("#1976d2", "▼", "하락")
     st.markdown(f"""
     <div class='result-summary'>
         ☞ <b>시뮬레이션 분석 결과:</b><br>
-        추가 매수 시 예상 평단가는 기존 대비 <b>{abs(avg_diff):,.2f} {unit} {status}</b> 되었습니다.<br>
+        추가 매수 시 예상 평단가는 기존 대비 <span style='color:{color};'>{sign} {abs(avg_diff):,.2f} {unit} {status}</span> 되었습니다.<br>
         최종 주당 평균 가액은 <b>{final_avg:,.2f} {unit}</b>입니다.
     </div>
     """, unsafe_allow_html=True)
 
-# [복구] 상세 SUMMARY 표
-st.markdown("### 📋 상세 시뮬레이션 요약 (SUMMARY)")
+# 📋 상세 SUMMARY 표 (간격 최적화)
+st.markdown("<div class='summary-table-title'>📋 상세 시뮬레이션 요약 (SUMMARY)</div>", unsafe_allow_html=True)
 df_res = pd.DataFrame({
-    "항목": ["보유 수량", "평균 단가", "총 투자금", "수익 금액", "수익률(%)"],
-    "현재 상태": [f"{current_qty:,}주", f"{current_avg:,.2f}", f"{(current_avg*current_qty):,.0f}{unit}", f"{(now_p-current_avg)*current_qty:+,.0f}{unit}", f"{(now_p-current_avg)/current_avg*100 if current_avg>0 else 0:.2f}%"],
-    "매수 후 예상": [f"{total_qty:,}주", f"{final_avg:,.2f}", f"{total_cost:,.0f}{unit}", f"{(now_p-final_avg)*total_qty:+,.0f}{unit}", f"{aft_rtn:.2f}%"]
+    "항목": ["보유 수량", "평균 단가", "수익 금액", "수익률(%)"],
+    "현재 상태": [f"{current_qty:,}주", f"{current_avg:,.2f}", f"{(now_p-current_avg)*current_qty:+,.0f}{unit}", f"{(now_p-current_avg)/current_avg*100 if current_avg>0 else 0:.2f}%"],
+    "매수 후 예상": [f"{total_qty:,}주", f"{final_avg:,.2f}", f"{(now_p-final_avg)*total_qty:+,.0f}{unit}", f"{aft_rtn:.2f}%"]
 }).set_index("항목")
-st.table(df_res.style.applymap(lambda x: 'color: #d32f2f; font-weight: bold;' if '+' in str(x) else ('color: #2e7d32; font-weight: bold;' if '-' in str(x) else ''), subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
+st.table(df_res.style.applymap(lambda x: 'color: #d32f2f; font-weight: bold;' if '+' in str(x) else ('color: #1976d2; font-weight: bold;' if '-' in str(x) else ''), subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
 
 st.markdown("---")
 st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b></div>", unsafe_allow_html=True)
