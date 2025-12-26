@@ -21,20 +21,30 @@ st.markdown("""
 # --- 1. 데이터 엔진 ---
 @st.cache_data(ttl=3600)
 def get_symbol_info(raw_input):
+    if not raw_input: return None, "KR", "None"
     raw_input = raw_input.strip().upper()
     ticker_out, market, name = None, "KR", raw_input
-    if raw_input.isdigit() and len(raw_input) == 6:
-        for suffix in [".KS", ".KQ"]:
-            t_obj = yf.Ticker(raw_input + suffix)
-            if not t_obj.history(period="1d").empty:
-                ticker_out, market = raw_input + suffix, "KR"
-                name = t_obj.info.get('longName') or t_obj.info.get('shortName') or raw_input
-                break
-    else:
-        t_obj = yf.Ticker(raw_input)
-        if not t_obj.history(period="1d").empty:
-            ticker_out, market = raw_input, "US"
-            name = t_obj.info.get('shortName', raw_input)
+    
+    try:
+        if raw_input.isdigit() and len(raw_input) == 6:
+            # 한국 주식은 .KS(코스피) 또는 .KQ(코스닥) 중 데이터가 있는 쪽을 찾음
+            for suffix in [".KS", ".KQ"]:
+                t_obj = yf.Ticker(raw_input + suffix)
+                # 데이터 확인 로직 강화: history 대신 fast_info나 info 활용 가능
+                if t_obj.history(period="5d").empty == False: 
+                    ticker_out, market = raw_input + suffix, "KR"
+                    name = t_obj.info.get('shortName') or t_obj.info.get('longName') or raw_input
+                    break
+        else:
+            # 미국 주식
+            t_obj = yf.Ticker(raw_input)
+            if t_obj.history(period="5d").empty == False:
+                ticker_out, market = raw_input, "US"
+                name = t_obj.info.get('shortName', raw_input)
+    except Exception as e:
+        st.error(f"데이터 연동 중 오류 발생: {e}")
+        return None, "KR", "None"
+        
     return ticker_out, market, name
 
 # --- 2. 사이드바 조회 ---
