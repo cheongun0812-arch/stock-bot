@@ -2,125 +2,120 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
-# --- 1. 페이지 테마 및 스타일 ---
-st.set_page_config(page_title="CHEONGUN AI Quant Master", layout="wide")
+# --- 페이지 설정 및 스타일 (원본 스타일 유지) ---
+st.set_page_config(page_title="CHEONGUN Quant Simulator", layout="wide")
 
 st.markdown("""
     <style>
-    .main-title { font-size: 2.5rem; font-weight: 900; text-align: center; color: #1E1E1E; margin-bottom: 10px; }
-    .disclaimer { font-size: 0.85rem; color: #666666; text-align: center; margin-bottom: 30px; }
-    .section-title { font-size: 1.75rem !important; font-weight: 700 !important; margin-top: 25px; }
-    .stMetric { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; }
+    .pos-val { color: #d32f2f; font-weight: bold; } 
+    .neg-val { color: #2e7d32; font-weight: bold; } 
+    .bold-text { font-weight: 800 !important; font-size: 1.2rem; }
+    .main-title { font-size: 2.5rem; font-weight: 900; text-align: center; margin-bottom: 30px; }
+    .section-title { font-size: 1.75rem !important; font-weight: 700 !important; margin-top: 20px; margin-bottom: 15px; }
     td { text-align: right !important; }
+    th { text-align: center !important; }
+    .guide-msg { font-size: 1rem; font-weight: 600; margin-top: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 데이터 엔진 ---
+# --- 1. 엔진: 데이터 로드 ---
 @st.cache_data(ttl=3600)
-def get_stock_data(ticker, period="2y"):
-    df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df
+def get_symbol_info(raw_input):
+    raw_input = raw_input.strip().upper()
+    ticker_out, market, name = None, None, raw_input
+    if raw_input.isdigit() and len(raw_input) == 6:
+        for suffix in [".KS", ".KQ"]:
+            t_obj = yf.Ticker(raw_input + suffix)
+            if not t_obj.history(period="1d").empty:
+                ticker_out, market = raw_input + suffix, "KR"
+                name = t_obj.info.get('longName') or t_obj.info.get('shortName') or raw_input
+                break
+    else:
+        t_obj = yf.Ticker(raw_input)
+        if not t_obj.history(period="1d").empty:
+            ticker_out, market = raw_input, "US"
+            name = t_obj.info.get('shortName', raw_input)
+    return ticker_out, market, name
 
-# --- 3. 백테스팅 엔진 (물타기 전략 분석) ---
-def run_backtest(df, drop_threshold, buy_amount_ratio=1.0):
-    """
-    drop_threshold: 매수 타점 (예: -0.1은 고점 대비 10% 하락 시 매수)
-    buy_amount_ratio: 고점 대비 하락 시 기존 보유 수량만큼 추가 매수 (1:1 물타기)
-    """
-    initial_price = df['Close'].iloc[0]
-    holdings = 100 # 초기 100주 가정
-    avg_price = initial_price
-    total_invested = initial_price * holdings
-    
-    peak_price = initial_price
-    buy_count = 0
-    escape_date = None
-    
-    for date, row in df.iterrows():
-        curr_price = row['Close']
-        if curr_price > peak_price:
-            peak_price = curr_price
-        
-        # 물타기 조건 확인 (고점 대비 drop_threshold 이하로 떨어졌을 때)
-        if curr_price <= peak_price * (1 + drop_threshold):
-            # 추가 매수 실행
-            add_qty = holdings * buy_amount_ratio
-            total_invested += curr_price * add_qty
-            holdings += add_qty
-            avg_price = total_invested / holdings
-            buy_count += 1
-            peak_price = curr_price # 매수 후 기준점 갱신
-            
-        # 탈출 조건 확인 (수익률이 0% 이상으로 돌아왔을 때)
-        if curr_price >= avg_price and buy_count > 0:
-            escape_date = date
-            break
-            
-    duration = (escape_date - df.index[0]).days if escape_date else "미탈출"
-    final_return = ((df['Close'].iloc[-1] - avg_price) / avg_price * 100)
-    
-    return buy_count, duration, final_return, avg_price
-
-# --- 4. 사이드바 및 UI ---
+# --- 2. 사이드바 ---
 with st.sidebar:
-    st.header("🔍 종목 및 전략 설정")
-    ticker_input = st.text_input("종목 번호 또는 티커", value="005930")
-    st.caption("💡 국장(005930), 미장(AAPL) 모두 지원")
-    
-    strategy_pct = st.selectbox("물타기 진입 구간 설정", [-0.05, -0.10, -0.20], format_func=lambda x: f"고점 대비 {int(x*100)}% 하락 시")
-    
-    ticker_final = ticker_input.strip().upper()
-    if ticker_final.isdigit(): ticker_final += ".KS"
-    
-    df = get_stock_data(ticker_final)
-    live_p = df['Close'].iloc[-1] if not df.empty else 0.0
+    st.header("🔍 관심 종목 조회")
+    user_input = st.text_input("종목 번호 또는 티커 입력", value="005930")
+    ticker, market, s_name = get_symbol_info(user_input)
+    live_p = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1] if ticker else 0.0
 
-# --- 5. 메인 레이아웃 ---
-st.markdown(f"<div class='main-title'>📊 {ticker_input} AI 전략 백테스팅</div>", unsafe_allow_html=True)
-st.markdown("<div class='disclaimer'>본 시뮬레이션은 과거 데이터를 기반으로 하며 미래 수익을 보장하지 않습니다.</div>", unsafe_allow_html=True)
+# --- 3. 메인 화면: 원본 포맷 유지 ---
+st.markdown(f"<div class='main-title'>📈 {s_name} 투자 시뮬레이션</div>", unsafe_allow_html=True)
 
-if not df.empty:
-    # 차트 시각화
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='종가', line=dict(color='#1f77b4')))
-    fig.update_layout(title="최근 주가 추이", height=400, template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+st.markdown("<div class='section-title'>👤 1️⃣ 내 현재 보유 현황</div>", unsafe_allow_html=True)
+with st.expander("입력창 열기/닫기", expanded=True):
+    c1, c2, c3 = st.columns(3)
+    curr_unit = "원" if market == "KR" else "$"
+    current_avg = st.number_input(f"현재 내 평단가 ({curr_unit})", value=float(live_p))
+    current_qty = st.number_input("현재 보유 수량 (주)", value=0)
+    now_p = st.number_input(f"현재 주식 단가", value=float(live_p))
 
-    # 백테스팅 실행
-    b_count, b_duration, b_return, b_avg = run_backtest(df, strategy_pct)
+# --- 4. 추가 매수 시나리오 (타이핑 박스 + 동기화 슬라이더 반영) ---
+st.divider()
+st.markdown("<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오</div>", unsafe_allow_html=True)
+cs1, cs2, cs3 = st.columns([1.5, 1.5, 1.2])
 
-    st.markdown("<div class='section-title'>🔍 전략 분석 결과 (Backtest)</div>", unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("총 물타기 횟수", f"{b_count}회")
-    c2.metric("탈출 소요 기간", f"{b_duration}일")
-    c3.metric("최종 예상 수익률", f"{b_return:.2f}%", delta=f"{b_return:.2f}%")
-    c4.metric("최종 예상 평단가", f"{b_avg:,.0f}원")
+p_min, p_max = float(now_p * 0.1), float(now_p * 2.0)
+q_min, q_max = 0.0, 10000.0
 
-    # 실시간 시뮬레이터 (사용자 입력)
-    st.divider()
-    st.markdown("<div class='section-title'>👤 실시간 물타기 시뮬레이터</div>", unsafe_allow_html=True)
-    col_in1, col_in2 = st.columns(2)
-    with col_in1:
-        my_avg = st.number_input("나의 현재 평단가", value=float(live_p * 1.1))
-        my_qty = st.number_input("보유 수량", value=100)
-    with col_in2:
-        add_p = st.slider("추가 매수 가격", float(live_p*0.5), float(live_p*1.5), float(live_p))
-        add_q = st.slider("추가 매수 수량", 0, 1000, 100)
+with cs1:
+    # 요청하신 타이핑 박스 추가
+    buy_p_input = st.number_input(f"추가 매수 가격 ({curr_unit})", min_value=p_min, max_value=p_max, value=now_p)
+    # 슬라이더와 동기화
+    buy_p = st.slider("가격 미세 조정", p_min, p_max, value=min(max(buy_p_input, p_min), p_max), label_visibility="collapsed")
 
-    # 계산 결과 표
-    new_avg = ((my_avg * my_qty) + (add_p * add_q)) / (my_qty + add_q)
-    res_df = pd.DataFrame({
-        "항목": ["보유 수량", "평균 단가", "수익률(%)"],
-        "현재": [f"{my_qty:,}주", f"{my_avg:,.0f}원", f"{(live_p-my_avg)/my_avg*100:.2f}%"],
-        "매수 후": [f"{my_qty+add_q:,}주", f"{new_avg:,.0f}원", f"{(live_p-new_avg)/new_avg*100:.2f}%"]
-    }).set_index("항목")
-    st.table(res_df)
+with cs2:
+    # 요청하신 타이핑 박스 추가
+    buy_q_input = st.number_input("추가 구매 수량 (주)", min_value=q_min, max_value=q_max, value=0.0)
+    # 슬라이더와 동기화
+    buy_q = st.slider("수량 미세 조정", q_min, q_max, value=min(max(buy_q_input, q_min), q_max), label_visibility="collapsed")
 
-    st.info(f"📑 **AI 인텔리전트 가이드**: 선택하신 {int(strategy_pct*100)}% 하락 전략은 과거 데이터 기준 탈출까지 평균 {b_duration}일이 소요되었습니다.")
+total_buy_amt = buy_p * buy_q
+with cs3:
+    st.markdown("**💰 추가 구매 총액**")
+    val_str = f"${total_buy_amt:,.2f}" if market == "US" else f"{total_buy_amt:,.0f}원"
+    st.markdown(f"<h3 style='color: #2e7d32; text-align: right;'>{val_str}</h3>", unsafe_allow_html=True)
+
+# --- 5. 시뮬레이션 분석 결과 (원본 위치 및 로직 유지) ---
+st.divider()
+st.markdown("<div class='section-title'>🔍 시뮬레이션 분석 결과</div>", unsafe_allow_html=True)
+
+old_cost, new_cost = current_avg * current_qty, total_buy_amt
+total_qty = current_qty + buy_q
+final_avg = (old_cost + new_cost) / total_qty if total_qty > 0 else 0
+avg_diff = final_avg - current_avg
+aft_rtn = ((now_p - final_avg) / final_avg * 100) if final_avg > 0 else 0
+
+r1, r2, r3 = st.columns(3)
+with r1:
+    val = f"${now_p:,.2f}" if market == "US" else f"{int(now_p):,}원"
+    st.markdown(f"<p class='bold-text'>실시간 현재가</p><h2 class='bold-text'>{val}</h2>", unsafe_allow_html=True)
+
+with r2:
+    val = f"${final_avg:,.2f}" if market == "US" else f"{int(final_avg):,}원"
+    color, sign, msg = ("#d32f2f", "▲", "🔺 평단가 상승 (불타기)") if avg_diff > 0 else ("#2e7d32", "▼", "🔹 평단가 하락 (물타기)")
+    st.markdown(f"<p class='bold-text'>예상 평단가</p><h2 class='bold-text'>{val}</h2>"
+                f"<p style='color:{color}; text-align: right; margin-bottom:0;'>{sign} {abs(avg_diff):,.2f}</p>"
+                f"<p class='guide-msg' style='color:{color}; text-align: right;'>{msg}</p>", unsafe_allow_html=True)
+
+with r3:
+    rtn_color = "#d32f2f" if aft_rtn >= 0 else "#2e7d32"
+    st.markdown(f"<p class='bold-text'>예상 수익률 변화</p><h2 style='color:{rtn_color}; font-weight:800;'>{aft_rtn:.2f}%</h2>", unsafe_allow_html=True)
+
+# --- 6. 상세 데이터 표 ---
+df_res = pd.DataFrame({
+    "항목": ["보유 수량", "평균 단가", "수익 금액", "수익률(%)"],
+    "현재 상태": [f"{current_qty:,}주", f"{current_avg:,.2f}", f"{(now_p-current_avg)*current_qty:+,.0f}", f"{(now_p-current_avg)/current_avg*100 if current_avg>0 else 0:.2f}%"],
+    "추가 매수 후 예상": [f"{total_qty:,}주", f"{final_avg:,.2f}", f"{(now_p-final_avg)*total_qty:+,.0f}", f"{aft_rtn:.2f}%"]
+}).set_index("항목")
+
+st.table(df_res.style.applymap(lambda x: 'color: #d32f2f; font-weight: bold;' if '+' in str(x) else ('color: #2e7d32; font-weight: bold;' if '-' in str(x) else ''), subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
 
 st.markdown("---")
-st.markdown("<div style='text-align: right; color: gray;'>Designed by <b>CHEONGUN</b> | Powered by AI Quant</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b></div>", unsafe_allow_html=True)
