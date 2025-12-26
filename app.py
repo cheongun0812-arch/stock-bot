@@ -3,10 +3,10 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# --- [1. 페이지 설정 및 초기화] ---
+# --- [1. 페이지 설정 및 상태 초기화] ---
 st.set_page_config(page_title="CHEONGUN Quant Simulator", layout="wide")
 
-# 아빠의 입력값을 고정하는 메모리 설정 (FIX 기능)
+# 아빠의 입력값을 브라우저 메모리에 박제(FIX)하는 설정
 if 'my_avg' not in st.session_state: st.session_state.my_avg = 0.0
 if 'my_qty' not in st.session_state: st.session_state.my_qty = 0
 if 'buy_p_fix' not in st.session_state: st.session_state.buy_p_fix = 0.0
@@ -25,7 +25,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- [2. 엔진: 데이터 로드 및 차트 복구] ---
+# --- [2. 엔진: 데이터 로직 및 차트] ---
 @st.cache_data(ttl=3600)
 def get_symbol_info(raw_input):
     if not raw_input: return None, "KR", "입력대기"
@@ -34,7 +34,7 @@ def get_symbol_info(raw_input):
     if raw_input.isdigit() and len(raw_input) == 6:
         for suffix in [".KS", ".KQ"]:
             t_obj = yf.Ticker(raw_input + suffix)
-            if not t_obj.history(period="5d").empty:
+            if not t_obj.history(period="1d").empty:
                 ticker_out, market = raw_input + suffix, "KR"
                 raw_name = t_obj.info.get('longName') or t_obj.info.get('shortName') or raw_input
                 mapping = {"Samsung Electronics Co., Ltd.": "삼성전자", "SK hynix Inc.": "SK하이닉스"}
@@ -42,33 +42,24 @@ def get_symbol_info(raw_input):
                 break
     else:
         t_obj = yf.Ticker(raw_input)
-        if not t_obj.history(period="5d").empty:
+        if not t_obj.history(period="1d").empty:
             ticker_out, market = raw_input, "US"
             name = t_obj.info.get('shortName', raw_input)
     return ticker_out, market, name
 
 def get_advanced_chart(ticker_symbol):
     try:
-        # 최근 1년 데이터를 가져옴 (아빠가 요청하신 캔들 지표용)
         df = yf.download(ticker_symbol, period="1y", progress=False, auto_adjust=True)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        
-        # 아빠가 요청하신 이동평균 지표: 2, 6, 20, 60, 180일
         for ma in [2, 6, 20, 60, 180]:
             df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
-        
         fig = go.Figure()
-        # 캔들스틱 차트
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='주가(캔들)'))
-        
-        # 이평선 추가
         clrs = ['#FFD700', '#FF8C00', '#FF1493', '#00BFFF', '#8B4513']
         for i, ma in enumerate([2, 6, 20, 60, 180]):
             fig.add_trace(go.Scatter(x=df.index, y=df[f'MA{ma}'], line=dict(width=1.2, color=clrs[i]), name=f'{ma}일선'))
-        
-        fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_white", 
-                          margin=dict(t=30, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_white", margin=dict(t=30, b=10))
         return fig
     except: return None
 
@@ -96,19 +87,23 @@ with st.expander("데이터 입력 (입력 시 고정)", expanded=True):
     now_p = c3.number_input(f"현재 시장가 (실시간)", value=float(live_p))
     st.session_state.my_avg, st.session_state.my_qty = current_avg, current_qty
 
-# 2️⃣ 추가 매수 시나리오 (타이핑 기능 포함)
+# 2️⃣ 추가 매수 시나리오 (아빠가 요청하신 가격 고정 로직 완성)
 st.divider()
 st.markdown(f"<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오 ({unit})</div>", unsafe_allow_html=True)
 cs1, cs2, cs3 = st.columns([1.5, 1.5, 1.2])
 p_min, p_max = float(now_p * 0.1), float(now_p * 3.0)
 
 with cs1:
-    buy_p_in = st.number_input(f"추가 매수 가격", min_value=p_min, max_value=p_max, value=st.session_state.buy_p_fix if st.session_state.buy_p_fix > 0 else float(now_p))
+    # [핵심 수정] 아빠가 입력한 값을 세션에 저장하여 리프레시 시에도 유지
+    buy_p_val = st.session_state.buy_p_fix if st.session_state.buy_p_fix > 0 else float(now_p)
+    buy_p_in = st.number_input(f"추가 매수 가격", min_value=p_min, max_value=p_max, value=buy_p_val)
     buy_p = st.slider("가격 조정", p_min, p_max, value=min(max(buy_p_in, p_min), p_max), label_visibility="collapsed")
-    st.session_state.buy_p_fix = buy_p 
+    st.session_state.buy_p_fix = buy_p # 입력된 가격을 메모리에 박제
+
 with cs2:
     buy_q_in = st.number_input("추가 구매 수량 (주)", min_value=0, max_value=100000, value=0)
     buy_q = st.slider("수량 조정", 0, 100000, value=int(buy_q_in), label_visibility="collapsed")
+
 total_buy = buy_p * buy_q
 with cs3:
     st.markdown(f"**💰 추가 구매 총액**")
@@ -129,7 +124,6 @@ m1.metric("현재 시장가", f"{now_p:,.2f} {unit}")
 m2.metric("예상 평단가", f"{final_avg:,.2f} {unit}", f"{avg_diff:,.2f}", delta_color="inverse")
 m3.metric("예상 수익률", f"{aft_rtn:.2f}%")
 
-# [안내 문구 복구]
 if total_qty > 0:
     color, sign, status = ("#d32f2f", "▲", "상승") if avg_diff > 0 else ("#1976d2", "▼", "하락")
     st.markdown(f"""
@@ -140,7 +134,6 @@ if total_qty > 0:
     </div>
     """, unsafe_allow_html=True)
 
-# [SUMMARY 표 복구]
 st.markdown("### 📋 상세 시뮬레이션 요약 (SUMMARY)")
 df_res = pd.DataFrame({
     "항목": ["보유 수량", "평균 단가", "수익 금액", "수익률(%)"],
@@ -149,13 +142,10 @@ df_res = pd.DataFrame({
 }).set_index("항목")
 st.table(df_res.style.applymap(lambda x: 'color: #d32f2f; font-weight: bold;' if '+' in str(x) else ('color: #1976d2; font-weight: bold;' if '-' in str(x) else ''), subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
 
-# 4️⃣ [대망의 그래프 복구] 2, 6, 20, 60, 180일선 포함
+# 4️⃣ [그래프 복구] 2, 6, 20, 60, 180일선 포함
 st.markdown("<div class='section-title'>📊 최근 1년 주가 흐름 및 기술적 지표</div>", unsafe_allow_html=True)
 chart = get_advanced_chart(ticker)
-if chart: 
-    st.plotly_chart(chart, use_container_width=True)
-else:
-    st.info("차트 데이터를 불러오는 중입니다...")
+if chart: st.plotly_chart(chart, use_container_width=True)
 
 st.markdown("---")
 st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b></div>", unsafe_allow_html=True)
