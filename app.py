@@ -1,9 +1,8 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
 
-# --- 페이지 설정 및 스타일 (원본 스타일 유지) ---
+# --- [원본 스타일 유지] ---
 st.set_page_config(page_title="CHEONGUN Quant Simulator", layout="wide")
 
 st.markdown("""
@@ -19,11 +18,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. 엔진: 데이터 로드 ---
+# --- 1. 데이터 엔진 ---
 @st.cache_data(ttl=3600)
 def get_symbol_info(raw_input):
     raw_input = raw_input.strip().upper()
-    ticker_out, market, name = None, None, raw_input
+    ticker_out, market, name = None, "KR", raw_input
     if raw_input.isdigit() and len(raw_input) == 6:
         for suffix in [".KS", ".KQ"]:
             t_obj = yf.Ticker(raw_input + suffix)
@@ -38,75 +37,77 @@ def get_symbol_info(raw_input):
             name = t_obj.info.get('shortName', raw_input)
     return ticker_out, market, name
 
-# --- 2. 사이드바 ---
+# --- 2. 사이드바 조회 ---
 with st.sidebar:
     st.header("🔍 관심 종목 조회")
     user_input = st.text_input("종목 번호 또는 티커 입력", value="005930")
     ticker, market, s_name = get_symbol_info(user_input)
     live_p = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1] if ticker else 0.0
+    # 단위 결정
+    unit = "원" if market == "KR" else "$"
 
-# --- 3. 메인 화면: 원본 포맷 유지 ---
+# --- 3. 메인 화면 ---
 st.markdown(f"<div class='main-title'>📈 {s_name} 투자 시뮬레이션</div>", unsafe_allow_html=True)
 
-st.markdown("<div class='section-title'>👤 1️⃣ 내 현재 보유 현황</div>", unsafe_allow_html=True)
-with st.expander("입력창 열기/닫기", expanded=True):
+st.markdown(f"<div class='section-title'>👤 1️⃣ 내 현재 보유 현황 ({unit})</div>", unsafe_allow_html=True)
+with st.expander("데이터 입력", expanded=True):
     c1, c2, c3 = st.columns(3)
-    curr_unit = "원" if market == "KR" else "$"
-    current_avg = st.number_input(f"현재 내 평단가 ({curr_unit})", value=float(live_p))
+    current_avg = st.number_input(f"현재 내 평단가 ({unit})", value=float(live_p))
     current_qty = st.number_input("현재 보유 수량 (주)", value=0)
-    now_p = st.number_input(f"현재 주식 단가", value=float(live_p))
+    now_p = st.number_input(f"현재 시장가 ({unit})", value=float(live_p))
 
-# --- 4. 추가 매수 시나리오 (타이핑 박스 + 동기화 슬라이더 반영) ---
+# --- 4. 추가 매수 시나리오 (양방향 동기화 반영) ---
 st.divider()
-st.markdown("<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오 ({unit})</div>", unsafe_allow_html=True)
 cs1, cs2, cs3 = st.columns([1.5, 1.5, 1.2])
 
-p_min, p_max = float(now_p * 0.1), float(now_p * 2.0)
-q_min, q_max = 0.0, 10000.0
+# 안전 범위 설정
+p_min, p_max = float(now_p * 0.1), float(now_p * 3.0)
+if p_min == p_max: p_max += 100.0
 
 with cs1:
-    # 요청하신 타이핑 박스 추가
-    buy_p_input = st.number_input(f"추가 매수 가격 ({curr_unit})", min_value=p_min, max_value=p_max, value=now_p)
-    # 슬라이더와 동기화
-    buy_p = st.slider("가격 미세 조정", p_min, p_max, value=min(max(buy_p_input, p_min), p_max), label_visibility="collapsed")
+    # 타이핑 박스
+    buy_p_in = st.number_input(f"추가 매수 가격 ({unit})", min_value=p_min, max_value=p_max, value=float(now_p))
+    # 슬라이더 (타이핑 값과 동기화)
+    buy_p = st.slider("가격 미세 조정", p_min, p_max, value=min(max(buy_p_in, p_min), p_max), label_visibility="collapsed")
 
 with cs2:
-    # 요청하신 타이핑 박스 추가
-    buy_q_input = st.number_input("추가 구매 수량 (주)", min_value=q_min, max_value=q_max, value=0.0)
-    # 슬라이더와 동기화
-    buy_q = st.slider("수량 미세 조정", q_min, q_max, value=min(max(buy_q_input, q_min), q_max), label_visibility="collapsed")
+    # 타이핑 박스
+    buy_q_in = st.number_input("추가 구매 수량 (주)", min_value=0, max_value=10000, value=0)
+    # 슬라이더 (타이핑 값과 동기화)
+    buy_q = st.slider("수량 미세 조정", 0, 10000, value=int(buy_q_in), label_visibility="collapsed")
 
 total_buy_amt = buy_p * buy_q
 with cs3:
-    st.markdown("**💰 추가 구매 총액**")
+    st.markdown(f"**💰 추가 구매 총액 ({unit})**")
     val_str = f"${total_buy_amt:,.2f}" if market == "US" else f"{total_buy_amt:,.0f}원"
     st.markdown(f"<h3 style='color: #2e7d32; text-align: right;'>{val_str}</h3>", unsafe_allow_html=True)
 
-# --- 5. 시뮬레이션 분석 결과 (원본 위치 및 로직 유지) ---
+# --- 5. 분석 결과 ---
 st.divider()
 st.markdown("<div class='section-title'>🔍 시뮬레이션 분석 결과</div>", unsafe_allow_html=True)
 
-old_cost, new_cost = current_avg * current_qty, total_buy_amt
 total_qty = current_qty + buy_q
-final_avg = (old_cost + new_cost) / total_qty if total_qty > 0 else 0
+total_cost = (current_avg * current_qty) + (buy_p * buy_q)
+final_avg = total_cost / total_qty if total_qty > 0 else 0
 avg_diff = final_avg - current_avg
 aft_rtn = ((now_p - final_avg) / final_avg * 100) if final_avg > 0 else 0
 
 r1, r2, r3 = st.columns(3)
 with r1:
-    val = f"${now_p:,.2f}" if market == "US" else f"{int(now_p):,}원"
-    st.markdown(f"<p class='bold-text'>실시간 현재가</p><h2 class='bold-text'>{val}</h2>", unsafe_allow_html=True)
+    cur_val = f"${now_p:,.2f}" if market == "US" else f"{int(now_p):,}원"
+    st.markdown(f"<p class='bold-text'>실시간 현재가</p><h2 class='bold-text'>{cur_val}</h2>", unsafe_allow_html=True)
 
 with r2:
-    val = f"${final_avg:,.2f}" if market == "US" else f"{int(final_avg):,}원"
-    color, sign, msg = ("#d32f2f", "▲", "🔺 평단가 상승 (불타기)") if avg_diff > 0 else ("#2e7d32", "▼", "🔹 평단가 하락 (물타기)")
-    st.markdown(f"<p class='bold-text'>예상 평단가</p><h2 class='bold-text'>{val}</h2>"
-                f"<p style='color:{color}; text-align: right; margin-bottom:0;'>{sign} {abs(avg_diff):,.2f}</p>"
+    avg_val = f"${final_avg:,.2f}" if market == "US" else f"{int(final_avg):,}원"
+    color, sign, msg = ("#d32f2f", "▲", "🔺 평단가 상승") if avg_diff > 0 else ("#2e7d32", "▼", "🔹 평단가 하락")
+    st.markdown(f"<p class='bold-text'>예상 평단가</p><h2 class='bold-text'>{avg_val}</h2>"
+                f"<p style='color:{color}; text-align: right; margin:0;'>{sign} {abs(avg_diff):,.2f}</p>"
                 f"<p class='guide-msg' style='color:{color}; text-align: right;'>{msg}</p>", unsafe_allow_html=True)
 
 with r3:
     rtn_color = "#d32f2f" if aft_rtn >= 0 else "#2e7d32"
-    st.markdown(f"<p class='bold-text'>예상 수익률 변화</p><h2 style='color:{rtn_color}; font-weight:800;'>{aft_rtn:.2f}%</h2>", unsafe_allow_html=True)
+    st.markdown(f"<p class='bold-text'>예상 수익률</p><h2 style='color:{rtn_color}; font-weight:800;'>{aft_rtn:.2f}%</h2>", unsafe_allow_html=True)
 
 # --- 6. 상세 데이터 표 ---
 df_res = pd.DataFrame({
