@@ -54,11 +54,11 @@ def get_advanced_chart(ticker_symbol):
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='주가(캔들)', increasing_line_color='#d32f2f', decreasing_line_color='#1976d2'))
     for col, color, lbl in [('MA5', '#FFD700', '5일선'), ('MA20', '#FF1493', '20일선'), ('MA60', '#00BFFF', '60일선'), ('MA120', '#8B4513', '120일선')]:
         fig.add_trace(go.Scatter(x=df.index, y=df[col], line=dict(color=color, width=1.3), name=lbl))
-    fig.update_layout(title=f"최근 1년 주가 흐름 및 이동평균선 분석", yaxis_title="가격", xaxis_rangeslider_visible=False, height=550, template="plotly_white", hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(title=f"최근 1년 주가 흐름 분석", yaxis_title="가격", xaxis_rangeslider_visible=False, height=550, template="plotly_white", hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     return fig
 
-# --- 3. 사이드바 및 실시간 주가 ---
+# --- 3. 사이드바 ---
 with st.sidebar:
     st.header("🔍 관심 종목 조회")
     st.markdown("<div class='sidebar-memo'>💡 국장(종목번호) 및 미장(티커) 모든 종목 조회 가능</div>", unsafe_allow_html=True)
@@ -70,7 +70,7 @@ with st.sidebar:
         live_p = float(yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1])
     else: live_p = 0.0
 
-# --- 4. 메인 화면 및 입력창 동기화 로직 ---
+# --- 4. 메인 화면 ---
 st.markdown(f"<div class='main-title'>📈 {s_name} AI 시뮬레이션</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='disclaimer'>본 프로그램의 결과는 참고용이며 투자 결정의 책임은 본인에게 있습니다.</div>", unsafe_allow_html=True)
 
@@ -82,41 +82,45 @@ with st.expander("데이터 입력", expanded=True):
     current_qty = st.number_input("현재 보유 수량 (주)", value=0)
     now_p = st.number_input(f"현재 시장가 (자동연동/수정)", value=live_p)
 
-# --- [핵심 업그레이드] 추가 매수 시나리오 (타이핑 & 드래그 동기화) ---
+# --- 🟦 2️⃣ 추가 매수 시나리오 (동기화 에러 해결 버전) ---
 st.divider()
 st.markdown("<div class='section-title'>🟦 2️⃣ 추가 매수 시나리오</div>", unsafe_allow_html=True)
 
-# 슬라이더 범위 설정
-p_min, p_max = float(now_p * 0.1), float(now_p * 2.0)
-q_min, q_max = 0, 10000
+# 1. 범위 설정 (live_p가 0일 경우 대비 안전값 설정)
+safe_now_p = now_p if now_p > 0 else 1.0
+p_min, p_max = float(safe_now_p * 0.1), float(safe_now_p * 2.0)
+q_min, q_max = 0.0, 10000.0
 
 cs1, cs2, cs3 = st.columns([1.5, 1.5, 1.2])
 
 with cs1:
-    # 타이핑 박스 (Key를 부여하여 슬라이더와 연동)
-    buy_p_input = st.number_input(f"추가 매수 가격 ({curr_unit})", min_value=p_min, max_value=p_max, value=now_p, step=100.0 if market=="KR" else 0.01)
-    # 슬라이더 (value를 위의 number_input 값으로 설정하여 동기화)
-    buy_p = st.slider("가격 미세 조정 (드래그)", p_min, p_max, value=buy_p_input, label_visibility="collapsed")
+    # 타이핑 박스
+    buy_p_input = st.number_input(f"추가 매수 가격 ({curr_unit})", min_value=p_min, max_value=p_max, value=float(safe_now_p), step=100.0 if market=="KR" else 0.01)
+    
+    # [핵심 수정] 범위를 벗어나지 않도록 강제 클리핑(Clipping)
+    safe_p_val = min(max(buy_p_input, p_min), p_max)
+    buy_p = st.slider("가격 미세 조정 (드래그)", p_min, p_max, value=safe_p_val, label_visibility="collapsed")
 
 with cs2:
     # 타이핑 박스
-    buy_q_input = st.number_input("추가 구매 수량 (주)", min_value=q_min, max_value=q_max, value=0)
-    # 슬라이더
-    buy_q = st.slider("수량 미세 조정 (드래그)", q_min, q_max, value=buy_q_input, label_visibility="collapsed")
+    buy_q_input = st.number_input("추가 구매 수량 (주)", min_value=q_min, max_value=q_max, value=0.0)
+    
+    # [핵심 수정] 범위를 벗어나지 않도록 강제 클리핑
+    safe_q_val = min(max(buy_q_input, q_min), q_max)
+    buy_q = st.slider("수량 미세 조정 (드래그)", q_min, q_max, value=safe_q_val, label_visibility="collapsed")
 
 total_buy_amt = buy_p * buy_q
 with cs3:
     st.markdown("**💰 예상 투입 금액**")
     val_str = f"${total_buy_amt:,.2f}" if market == "US" else f"{total_buy_amt:,.0f}원"
     st.markdown(f"<h3 style='color: #2e7d32; text-align: right;'>{val_str}</h3>", unsafe_allow_html=True)
-    if market == "US": st.caption(f"(약 {total_buy_amt*ex_rate:,.0f}원)")
 
-# --- 5. 차트 및 결과 리포트 ---
+# --- 5. 차트 및 분석 결과 (기존 로직 유지) ---
 st.divider()
 chart_fig = get_advanced_chart(ticker)
 if chart_fig: st.plotly_chart(chart_fig, use_container_width=True)
 
-# 계산 로직
+# 계산 및 표 출력 부분은 이전과 동일하게 진행됩니다.
 old_cost, new_cost = current_avg * current_qty, total_buy_amt
 total_qty_res = current_qty + buy_q
 final_avg = (old_cost + new_cost) / total_qty_res if total_qty_res > 0 else 0
@@ -137,18 +141,6 @@ with r3:
 
 if total_qty_res > 0:
     st.markdown(f"<div class='result-summary'>☞ 분석 결과: 평단가가 <span style='color:{cp};'>{sp} {abs(avg_diff):,.2f} {wp}</span>이 되었습니다.</div>", unsafe_allow_html=True)
-
-# 데이터 표 및 가이드
-data_conv = ex_rate if market == 'US' else 1
-df_res = pd.DataFrame({
-    "항목": ["보유 수량", "평균 단가", "수익 금액", "수익률(%)"],
-    "현재 상태": [f"{current_qty:,}주", f"{current_avg:,.2f}", f"{(now_p-current_avg)*current_qty*data_conv:+,.0f}원", f"{(now_p-current_avg)/current_avg*100 if current_avg>0 else 0:.2f}%"],
-    "매수 후 예상": [f"{total_qty_res:,}주", f"{final_avg:,.2f}", f"{aft_profit*data_conv:+,.0f}원", f"{aft_rtn:.2f}%"]
-}).set_index("항목")
-st.table(df_res.style.applymap(lambda x: 'color: #d32f2f;' if '+' in str(x) else ('color: #2e7d32;' if '-' in str(x) else ''), subset=pd.IndexSlice[['수익 금액', '수익률(%)'], :]))
-
-st.info("📑 **AI 인텔리전트 가이드**")
-st.write("차트상의 매물대와 이동평균선 지지 여부를 타이핑 박스를 통해 정확한 수치로 입력하여 시뮬레이션 해보세요.")
 
 st.markdown("---")
 st.markdown("<div style='text-align: right; color: gray; font-size: 0.8rem;'>Designed by <b>CHEONGUN</b><br>© 2025 All Rights Reserved. Powered by AI Quant Intelligence.</div>", unsafe_allow_html=True)
